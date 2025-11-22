@@ -46,7 +46,6 @@ router.get('/direct-messages/:userId', async (req, res) => {
     const otherUserId = parseInt(req.params.userId);
     const limit = parseInt(req.query.limit) || 50;
 
-    // Fetch messages between current user and specified user
     const [messages] = await db.query(
       `SELECT 
         dm.message_id,
@@ -65,7 +64,6 @@ router.get('/direct-messages/:userId', async (req, res) => {
       [currentUserId, otherUserId, otherUserId, currentUserId, limit]
     );
 
-    // Mark messages as read
     await db.query(
       `UPDATE DirectMessages 
        SET is_read = TRUE 
@@ -75,7 +73,7 @@ router.get('/direct-messages/:userId', async (req, res) => {
 
     res.json({
       success: true,
-      data: messages.reverse() // Return in chronological order
+      data: messages.reverse()
     });
   } catch (error) {
     console.error('Error fetching direct messages:', error);
@@ -102,9 +100,9 @@ router.get('/groups', async (req, res) => {
         g.created_at,
         gm.role,
         COUNT(DISTINCT gm2.user_id) as member_count
-       FROM Groups g
-       JOIN GroupMembers gm ON g.group_id = gm.group_id
-       LEFT JOIN GroupMembers gm2 ON g.group_id = gm2.group_id
+       FROM \`Groups\` g
+       JOIN \`GroupMembers\` gm ON g.group_id = gm.group_id
+       LEFT JOIN \`GroupMembers\` gm2 ON g.group_id = gm2.group_id
        WHERE gm.user_id = ?
        GROUP BY g.group_id, g.group_name, g.description, g.created_at, gm.role
        ORDER BY g.created_at DESC`,
@@ -140,14 +138,13 @@ router.post('/groups', async (req, res) => {
       });
     }
 
-    // Start transaction
     const connection = await db.getConnection();
     await connection.beginTransaction();
 
     try {
       // Create group
       const [groupResult] = await connection.query(
-        'INSERT INTO Groups (group_name, description, created_by) VALUES (?, ?, ?)',
+        'INSERT INTO `Groups` (group_name, description, created_by) VALUES (?, ?, ?)',
         [groupName, description || '', currentUserId]
       );
 
@@ -155,17 +152,18 @@ router.post('/groups', async (req, res) => {
 
       // Add creator as admin
       await connection.query(
-        'INSERT INTO GroupMembers (group_id, user_id, role) VALUES (?, ?, ?)',
+        'INSERT INTO `GroupMembers` (group_id, user_id, role) VALUES (?, ?, ?)',
         [groupId, currentUserId, 'admin']
       );
 
-      // Add other members if provided
+      // Add other members safely
       if (memberIds && Array.isArray(memberIds) && memberIds.length > 0) {
-        const memberValues = memberIds.map(userId => [groupId, userId, 'member']);
-        await connection.query(
-          'INSERT INTO GroupMembers (group_id, user_id, role) VALUES ?',
-          [memberValues]
-        );
+        const sql = `
+          INSERT INTO \`GroupMembers\` (group_id, user_id, role)
+          VALUES ${memberIds.map(() => '(?, ?, ?)').join(',')}
+        `;
+        const params = memberIds.flatMap(userId => [groupId, userId, 'member']);
+        await connection.query(sql, params);
       }
 
       await connection.commit();
@@ -192,7 +190,6 @@ router.post('/groups', async (req, res) => {
 
 /**
  * GET /api/chat/group-messages/:groupId
- * Get message history for a specific group
  */
 router.get('/group-messages/:groupId', async (req, res) => {
   try {
@@ -200,9 +197,8 @@ router.get('/group-messages/:groupId', async (req, res) => {
     const currentUserId = req.user.userId;
     const limit = parseInt(req.query.limit) || 50;
 
-    // Verify user is a member of the group
     const [membership] = await db.query(
-      'SELECT membership_id FROM GroupMembers WHERE group_id = ? AND user_id = ?',
+      'SELECT membership_id FROM `GroupMembers` WHERE group_id = ? AND user_id = ?',
       [groupId, currentUserId]
     );
 
@@ -213,7 +209,6 @@ router.get('/group-messages/:groupId', async (req, res) => {
       });
     }
 
-    // Fetch group messages
     const [messages] = await db.query(
       `SELECT 
         gm.message_id,
@@ -231,7 +226,7 @@ router.get('/group-messages/:groupId', async (req, res) => {
 
     res.json({
       success: true,
-      data: messages.reverse() // Return in chronological order
+      data: messages.reverse()
     });
   } catch (error) {
     console.error('Error fetching group messages:', error);
@@ -244,16 +239,14 @@ router.get('/group-messages/:groupId', async (req, res) => {
 
 /**
  * GET /api/chat/group-members/:groupId
- * Get all members of a specific group
  */
 router.get('/group-members/:groupId', async (req, res) => {
   try {
     const groupId = parseInt(req.params.groupId);
     const currentUserId = req.user.userId;
 
-    // Verify user is a member
     const [membership] = await db.query(
-      'SELECT membership_id FROM GroupMembers WHERE group_id = ? AND user_id = ?',
+      'SELECT membership_id FROM `GroupMembers` WHERE group_id = ? AND user_id = ?',
       [groupId, currentUserId]
     );
 
@@ -264,7 +257,6 @@ router.get('/group-members/:groupId', async (req, res) => {
       });
     }
 
-    // Fetch group members
     const [members] = await db.query(
       `SELECT 
         u.user_id,
@@ -273,7 +265,7 @@ router.get('/group-members/:groupId', async (req, res) => {
         u.is_online,
         gm.role,
         gm.joined_at
-       FROM GroupMembers gm
+       FROM \`GroupMembers\` gm
        JOIN Users u ON gm.user_id = u.user_id
        WHERE gm.group_id = ?
        ORDER BY gm.role DESC, u.username`,
